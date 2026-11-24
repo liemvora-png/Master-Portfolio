@@ -464,7 +464,6 @@ main {
 
 .intro {
   padding-block: clamp(5.5rem, 14vh, 9.5rem) clamp(2.75rem, 7vh, 4.5rem);
-  border-bottom: 3px solid var(--ink);
 }
 
 .eyebrow {
