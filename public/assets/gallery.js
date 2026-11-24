@@ -1,92 +1,8 @@
 const galleryGrid = document.querySelector("#gallery-grid");
-
-// Fetch and decode one variant off-DOM. Handing the visible <img> a URL that is
-// already decoded means the swap paints complete in a single step instead of
-// flashing a half-decoded frame.
-//
-// src is assigned before decode() so the decoder waits on a real request rather
-// than a pending one. Intermediate tiers are fetched at low priority: they exist
-// to sharpen the picture, not to gate first paint, while the final tier stays at
-// the browser's default so the sharpest variant is not queued behind them.
-function preload(url, fetchPriority) {
-  const candidate = new Image();
-  candidate.decoding = "async";
-  if (fetchPriority) candidate.fetchPriority = fetchPriority;
-  candidate.src = url;
-  return typeof candidate.decode === "function" ? candidate.decode() : Promise.resolve();
-}
-
-function showPhoto(photo, index) {
-  const figure = document.createElement("figure");
-  figure.className = "gallery-photo";
-  const frame = document.createElement("div");
-  frame.className = "gallery-photo-frame";
-  const image = document.createElement("img");
-  image.alt = photo.alt_text;
-  image.loading = "lazy";
-  image.decoding = "async";
-  image.width = 1200;
-  image.height = 900;
-  image.className = "gallery-photo-image";
-  // Only the first rows compete with the previews for bandwidth; everything
-  // further down should never push those first bytes back.
-  if (index > 2) image.fetchPriority = "low";
-  frame.append(image);
-  figure.append(frame);
-  if (photo.caption) {
-    const caption = document.createElement("figcaption");
-    caption.textContent = photo.caption;
-    figure.append(caption);
-  }
-
-  const originalUrl = photo.image_url;
-  const previewUrl = photo.preview_url || originalUrl;
-  const mediumUrl = photo.medium_url || previewUrl;
-
-  // Low to high. Each tier is listed even when its URL repeats an earlier one,
-  // because the upgrade loop below steps through positions, not URLs.
-  const chain = [
-    previewUrl,
-    mediumUrl,
-    originalUrl
-  ];
-
-  // The low tier always paints first. Width descriptors are deliberately absent:
-  // they would let the browser pick one candidate and ignore every later src
-  // change, which silently defeats the climb.
-  image.src = previewUrl;
-
-  galleryGrid.append(figure);
-
-  // Start at the tier after the preview and climb. Reaching the end of the chain
-  // simply stops: the highest tier that loaded is the one left on screen.
-  let next = 1;
-  function advance() {
-    const url = chain[next];
-    if (url === undefined) return;
-    const isFinal = next === chain.length - 1;
-    next += 1;
-    // Intermediate tiers are preloaded at low priority so they sharpen the
-    // picture without competing with the preview or the final variant.
-    preload(url, isFinal ? undefined : "low").then(
-      () => {
-        // Photos saved before their medium tier existed repeat a URL across the
-        // chain; reassigning src would make the browser refetch what it has.
-        if (url !== image.currentSrc) image.src = url;
-        // Climb regardless of which tier this was: if a middle tier failed, the
-        // loop still needs to reach the original rather than strand the photo.
-        advance();
-      },
-      // A tier that fails must not strand the photo on a lower one.
-      () => advance()
-    );
-  }
-
-  // Wait until the preview is on screen before spending bandwidth upward, so the
-  // low-quality tier is always what paints first.
-  if (image.complete && image.naturalWidth > 0) advance();
-  else image.addEventListener("load", advance, { once: true });
-}
+const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+const constrainedNetwork = Boolean(
+  connection && (connection.saveData || connection.effectiveType === "slow-2g" || connection.effectiveType === "2g")
+);
 
 fetch("/api/gallery", { headers: { Accept: "application/json" } })
   .then(async (response) => {
@@ -100,7 +16,89 @@ fetch("/api/gallery", { headers: { Accept: "application/json" } })
       galleryGrid.append(empty);
       return;
     }
-    result.images.forEach(showPhoto);
+    for (const [index, photo] of result.images.entries()) {
+      const figure = document.createElement("figure");
+      figure.className = "gallery-photo";
+      const frame = document.createElement("div");
+      frame.className = "gallery-photo-frame";
+      const image = document.createElement("img");
+      image.alt = photo.alt_text;
+      image.loading = index < 3 ? "eager" : "lazy";
+      if (index < 3) image.fetchPriority = "high";
+      image.decoding = "async";
+      image.width = 1200;
+      image.height = 900;
+      image.className = "gallery-photo-image";
+      frame.append(image);
+      figure.append(frame);
+
+      const originalUrl = photo.image_url;
+      const targetUrl = photo.medium_url || originalUrl;
+      const lowUrl = photo.preview_url || targetUrl;
+      const hasPreview = lowUrl !== targetUrl;
+
+      function markReady() {
+        image.classList.remove("is-preview");
+        image.classList.add("is-ready");
+      }
+
+      function upgrade(url) {
+        if (!url || url === image.src) {
+          markReady();
+          return;
+        }
+        const candidate = new Image();
+        candidate.decoding = "async";
+        candidate.width = 1200;
+        candidate.height = 900;
+        candidate.onload = async () => {
+          try {
+            if (typeof candidate.decode === "function") await candidate.decode();
+          } catch {}
+          image.src = url;
+          requestAnimationFrame(markReady);
+        };
+        candidate.onerror = () => {
+          if (url !== originalUrl) {
+            upgrade(originalUrl);
+          } else {
+            markReady();
+          }
+        };
+        candidate.src = url;
+      }
+
+      image.addEventListener("load", () => {
+        if (hasPreview) {
+          image.classList.add("is-preview");
+          if (constrainedNetwork && !photo.medium_url) {
+            image.addEventListener("click", () => upgrade(targetUrl), { once: true });
+          } else {
+            upgrade(targetUrl);
+          }
+        } else {
+          markReady();
+        }
+      }, { once: true });
+
+      image.addEventListener("error", () => {
+        if (image.src !== targetUrl && targetUrl !== lowUrl) {
+          upgrade(targetUrl);
+        } else if (image.src !== originalUrl && originalUrl !== lowUrl) {
+          upgrade(originalUrl);
+        } else {
+          markReady();
+        }
+      }, { once: true });
+
+      image.src = lowUrl;
+      if (photo.caption) {
+        const caption = document.createElement("figcaption");
+        caption.textContent = photo.caption;
+        figure.append(caption);
+      }
+      galleryGrid.append(figure);
+    }
   })
   .catch((error) => {
     galleryGrid.replaceChildren();
