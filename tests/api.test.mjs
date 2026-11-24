@@ -387,6 +387,13 @@ test("Worker serves private page templates and falls back to public assets", asy
   assert.equal(previewResponse.status, 200);
   assert.equal(previewResponse.headers.get("Content-Type"), "image/webp");
 
+  const jpegMediumResponse = await worker.fetch(
+    new Request("https://www.liemvora.cc/gallery-images/12345678-1234-1234-1234-123456789abc.medium.jpg"),
+    env,
+    {}
+  );
+  assert.equal(jpegMediumResponse.status, 200);
+
   const invalidVariant = await worker.fetch(
     new Request("https://www.liemvora.cc/gallery-images/not-a-gallery-image.low.webp"),
     env,

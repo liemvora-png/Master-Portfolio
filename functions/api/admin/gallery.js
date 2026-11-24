@@ -3,6 +3,7 @@ import { jsonResponse } from "../../_shared/content.js";
 
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024;
 const MAX_PREVIEW_SIZE = 20 * 1024 * 1024;
+const MAX_INLINE_PREVIEW_BYTES = 16 * 1024;
 const IMAGE_TYPES = new Map([
   ["image/jpeg", "jpg"],
   ["image/png", "png"],
@@ -11,12 +12,18 @@ const IMAGE_TYPES = new Map([
   ["image/gif", "gif"]
 ]);
 
-function variantFile(form, name, maxSize = 20 * 1024 * 1024) {
-  const file = form.get(name);
-  return file instanceof File && file.size > 0 && file.size <= maxSize
-    && (file.type === "image/webp" || file.type === "image/jpeg" || file.type === "image/png" || file.type === "image/gif")
-    ? file
-    : null;
+const VARIANT_TYPES = new Map([
+  ["image/webp", "webp"],
+  ["image/jpeg", "jpg"]
+]);
+
+async function toDataUri(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return `data:${file.type};base64,${btoa(binary)}`;
 }
 
 async function isAdmin(request, env) {
@@ -49,10 +56,12 @@ export async function onRequest({ request, env }) {
     if (!extension) {
       return jsonResponse({ error: "Use a JPEG, PNG, WebP, or GIF image." }, 400);
     }
-    if (preview instanceof File && (preview.type !== "image/webp" || preview.size < 1 || preview.size > MAX_PREVIEW_SIZE)) {
+    const previewExt = preview instanceof File ? VARIANT_TYPES.get(preview.type) : null;
+    if (preview instanceof File && (!previewExt || preview.size < 1 || preview.size > MAX_PREVIEW_SIZE)) {
       return jsonResponse({ error: "The preview image is invalid." }, 400);
     }
-    if (medium instanceof File && (medium.type !== "image/webp" || medium.size < 1 || medium.size > MAX_PREVIEW_SIZE)) {
+    const mediumExt = medium instanceof File ? VARIANT_TYPES.get(medium.type) : null;
+    if (medium instanceof File && (!mediumExt || medium.size < 1 || medium.size > MAX_PREVIEW_SIZE)) {
       return jsonResponse({ error: "The medium image is invalid." }, 400);
     }
     if (typeof altText !== "string" || !altText.trim() || altText.length > 240) {
@@ -65,22 +74,25 @@ export async function onRequest({ request, env }) {
     const id = crypto.randomUUID();
     const key = `gallery/${id}.${extension}`;
     const imageUrl = `/gallery-images/${id}.${extension}`;
-    const previewKey = preview instanceof File ? `gallery/${id}.low.webp` : null;
-    const previewUrl = previewKey ? `/gallery-images/${id}.low.webp` : null;
-    const mediumKey = medium instanceof File ? `gallery/${id}.medium.webp` : null;
-    const mediumUrl = mediumKey ? `/gallery-images/${id}.medium.webp` : null;
+    const inlinePreview = previewExt && preview.size <= MAX_INLINE_PREVIEW_BYTES;
+    const previewKey = previewExt && !inlinePreview ? `gallery/${id}.low.${previewExt}` : null;
+    const previewUrl = inlinePreview
+      ? await toDataUri(preview)
+      : (previewKey ? `/gallery-images/${id}.low.${previewExt}` : null);
+    const mediumKey = mediumExt ? `gallery/${id}.medium.${mediumExt}` : null;
+    const mediumUrl = mediumKey ? `/gallery-images/${id}.medium.${mediumExt}` : null;
     try {
       await env.GALLERY.put(key, file.stream(), {
         httpMetadata: { contentType: file.type }
       });
       if (previewKey) {
         await env.GALLERY.put(previewKey, preview.stream(), {
-          httpMetadata: { contentType: "image/webp" }
+          httpMetadata: { contentType: preview.type }
         });
       }
       if (mediumKey) {
         await env.GALLERY.put(mediumKey, medium.stream(), {
-          httpMetadata: { contentType: "image/webp" }
+          httpMetadata: { contentType: medium.type }
         });
       }
       const position = await env.DB.prepare(
@@ -164,10 +176,13 @@ export async function onRequest({ request, env }) {
       if (!/^[\w-]{36}\.(jpg|png|webp|avif|gif)$/.test(filename)) {
         throw new Error("Stored gallery image path is invalid.");
       }
-      const id = filename.replace(/\.[^.]+$/, "");
       await env.GALLERY.delete(`gallery/${filename}`);
-      await env.GALLERY.delete(`gallery/${id}.low.webp`);
-      await env.GALLERY.delete(`gallery/${id}.medium.webp`);
+      for (const variantUrl of [image.preview_url, image.medium_url]) {
+        const variantName = variantUrl?.split("/").pop();
+        if (variantName && /^[\w-]{36}\.(?:low|medium)\.(?:webp|jpg)$/.test(variantName)) {
+          await env.GALLERY.delete(`gallery/${variantName}`);
+        }
+      }
       await env.DB.prepare("DELETE FROM photo_gallery WHERE id = ?").bind(id).run();
       return jsonResponse({ deleted: true });
     } catch (error) {

@@ -59,5 +59,31 @@
     // CLERK_ADMIN_USER_IDS: "user_xxx,user_yyy". The admin editor shows the
     // rejected Clerk account id, which is what to put here.
     "CLERK_ADMIN_USER_ID": "user_3LHu9lXPwvZVoX3GEGv8qn85WEh"
+  },
+  "previews": {
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_name": "portfolio-content-preview",
+        "database_id": "f71b5df2-ef85-4794-a786-bbec3633376b"
+      }
+    ],
+    "r2_buckets": [
+      {
+        "binding": "GALLERY",
+        "bucket_name": "portfolio-gallery-preview"
+      }
+    ],
+    "send_email": [
+      {
+        "name": "BOOKING_EMAIL"
+      }
+    ],
+    "vars": {
+      "CLERK_PUBLISHABLE_KEY": "pk_live_Y2xlcmsubGllbXZvcmEuY2Mk",
+      "CLERK_ISSUER": "https://clerk.liemvora.cc",
+      "CLERK_JWKS_URL": "https://clerk.liemvora.cc/.well-known/jwks.json",
+      "CLERK_ADMIN_USER_ID": "user_3LHu9lXPwvZVoX3GEGv8qn85WEh"
+    }
   }
 }

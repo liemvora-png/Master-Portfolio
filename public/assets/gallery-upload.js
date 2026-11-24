@@ -189,8 +189,8 @@ async function createVariants(file) {
       return { error: `${file.name}: your browser could not create compressed previews. Upload a JPEG, PNG, or WebP instead.` };
     }
     return {
-      preview: new File([preview], "preview.webp", { type: "image/webp" }),
-      medium: new File([medium], "medium.webp", { type: "image/webp" })
+      preview: new File([preview], processedName("preview", preview.type), { type: preview.type }),
+      medium: new File([medium], processedName("medium", medium.type), { type: medium.type })
     };
   } finally {
     bitmap.close?.();
@@ -320,11 +320,11 @@ export function createUploader({ upload, setStatus, onUploaded }) {
         setStatus(`Creating previews for ${file.name}…`);
         const variants = await createVariants(uploadFile);
         if (variants.error) {
-          setStatus(variants.error);
-        } else {
-          preview = variants.preview;
-          medium = variants.medium;
+          rejections.push(variants.error);
+          continue;
         }
+        preview = variants.preview;
+        medium = variants.medium;
       }
       staged.push({
         file: uploadFile,
@@ -369,8 +369,8 @@ export function createUploader({ upload, setStatus, onUploaded }) {
       setStatus(`Uploading photo ${index + 1} of ${batch.length}…`);
       const data = new FormData();
       data.set("image", item.file, item.file.name);
-      if (item.preview) data.set("preview", item.preview, "preview.webp");
-      if (item.medium) data.set("medium", item.medium, "medium.webp");
+      if (item.preview) data.set("preview", item.preview, item.preview.name);
+      if (item.medium) data.set("medium", item.medium, item.medium.name);
       data.set("altText", item.altText.trim());
       data.set("caption", item.caption.trim());
       try {
